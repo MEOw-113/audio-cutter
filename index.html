@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>오디오 컷터</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#5b5bd6">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #ffffff; --fg: #1a1a1a; --sub: #666; --line: #ddd;
+    --accent: #5b5bd6; --accent2: #22a06b; --panel: #f5f5f7; --danger: #d6455b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #15151a; --fg: #eaeaea; --sub: #999; --line: #333; --panel: #1f1f26; }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 16px 16px 40px; background: var(--bg); color: var(--fg);
+    font-family: -apple-system, system-ui, "Segoe UI", sans-serif; max-width: 640px; margin-inline: auto;
+  }
+  h1 { font-size: 1.25rem; margin: 4px 0 16px; }
+  .panel { background: var(--panel); border-radius: 14px; padding: 16px; margin-bottom: 14px; }
+  .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .row + .row { margin-top: 10px; }
+  label { font-size: 0.85rem; color: var(--sub); }
+  button {
+    font-size: 0.95rem; padding: 10px 14px; border-radius: 10px; border: 1px solid var(--line);
+    background: var(--bg); color: var(--fg); cursor: pointer;
+  }
+  button:active { transform: scale(0.97); }
+  button.primary { background: var(--accent); color: white; border: none; }
+  button.ghost { background: transparent; }
+  button:disabled { opacity: 0.4; cursor: default; }
+  input[type="range"] { width: 100%; accent-color: var(--accent); }
+  input[type="text"], select {
+    font: inherit; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line);
+    background: var(--bg); color: var(--fg); width: 110px;
+  }
+  select { width: auto; }
+  .time-big { font-variant-numeric: tabular-nums; font-size: 1.4rem; font-weight: 600; }
+  .marker-box { border-left: 4px solid var(--accent); padding-left: 10px; }
+  .marker-box.end { border-left-color: var(--danger); }
+  .hint { font-size: 0.8rem; color: var(--sub); line-height: 1.4; }
+  #log { font-size: 0.78rem; color: var(--sub); white-space: pre-wrap; max-height: 120px; overflow-y: auto; }
+  a.download {
+    display: inline-block; margin-top: 10px; padding: 10px 16px; border-radius: 10px;
+    background: var(--accent2); color: white; text-decoration: none; font-weight: 600;
+  }
+  .step-btns button { min-width: 44px; }
+</style>
+</head>
+<body>
+
+<h1>🎧 오디오 컷터</h1>
+
+<div class="panel">
+  <input type="file" id="fileInput" accept="audio/*,video/*">
+  <p class="hint" id="fileInfo">파일을 선택하면 길이를 표시합니다. (100MB+, 4시간 이상도 지원)</p>
+</div>
+
+<div class="panel" id="controls" style="display:none">
+
+  <!-- 재생 -->
+  <div class="row">
+    <button id="playBtn">▶ 재생</button>
+    <button id="previewBtn">⏯ 선택구간만 미리듣기</button>
+    <span class="time-big" id="curTime">00:00:00.00</span>
+  </div>
+  <div class="row">
+    <input type="range" id="seekBar" min="0" max="0" step="0.01" value="0">
+  </div>
+
+  <!-- 시간 척도(줌) -->
+  <div class="row" style="margin-top:16px">
+    <label for="zoomSel">표시 범위</label>
+    <select id="zoomSel">
+      <option value="10">10초</option>
+      <option value="60">1분</option>
+      <option value="600">10분</option>
+      <option value="3600">1시간</option>
+      <option value="full">전체</option>
+    </select>
+    <span class="hint" id="windowInfo"></span>
+  </div>
+  <div class="row">
+    <input type="range" id="panBar" min="0" max="0" step="0.01" value="0">
+  </div>
+
+  <!-- 시작점 -->
+  <div class="marker-box" style="margin-top:16px">
+    <div class="row">
+      <strong>시작점</strong>
+      <input type="text" id="startText" value="00:00:00.00">
+      <button id="startNow" class="ghost">현재위치로</button>
+      <button id="startSeek" class="ghost">여기로 이동</button>
+    </div>
+    <div class="row step-btns">
+      <button data-target="start" data-delta="-1">-1s</button>
+      <button data-target="start" data-delta="-0.1">-0.1s</button>
+      <button data-target="start" data-delta="-0.01">-0.01s</button>
+      <button data-target="start" data-delta="0.01">+0.01s</button>
+      <button data-target="start" data-delta="0.1">+0.1s</button>
+      <button data-target="start" data-delta="1">+1s</button>
+    </div>
+    <input type="range" id="startBar" min="0" max="0" step="0.01" value="0">
+  </div>
+
+  <!-- 끝점 -->
+  <div class="marker-box end" style="margin-top:16px">
+    <div class="row">
+      <strong>끝점</strong>
+      <input type="text" id="endText" value="00:00:00.00">
+      <button id="endNow" class="ghost">현재위치로</button>
+      <button id="endSeek" class="ghost">여기로 이동</button>
+    </div>
+    <div class="row step-btns">
+      <button data-target="end" data-delta="-1">-1s</button>
+      <button data-target="end" data-delta="-0.1">-0.1s</button>
+      <button data-target="end" data-delta="-0.01">-0.01s</button>
+      <button data-target="end" data-delta="0.01">+0.01s</button>
+      <button data-target="end" data-delta="0.1">+0.1s</button>
+      <button data-target="end" data-delta="1">+1s</button>
+    </div>
+    <input type="range" id="endBar" min="0" max="0" step="0.01" value="0">
+  </div>
+
+  <p class="hint" id="durationInfo" style="margin-top:14px"></p>
+</div>
+
+<div class="panel" id="exportPanel" style="display:none">
+  <div class="row">
+    <label><input type="radio" name="mode" value="copy" checked> 빠른 자르기 (무손실, 프레임 단위 ≈0.02~0.05초 오차 가능)</label>
+  </div>
+  <div class="row">
+    <label><input type="radio" name="mode" value="encode"> 정밀 자르기 (재인코딩, 0.01초 정확 / 느림)</label>
+  </div>
+  <div class="row" style="margin-top:12px">
+    <button id="exportBtn" class="primary">✂ 선택 구간 내보내기</button>
+  </div>
+  <div id="log"></div>
+  <div id="downloadArea"></div>
+</div>
+
+<audio id="audioEl" style="display:none"></audio>
+
+<script type="module">
+import { FFmpeg } from "https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/esm/index.js";
+import { fetchFile, toBlobURL } from "https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.1/dist/esm/index.js";
+
+const $ = (id) => document.getElementById(id);
+const audioEl = $("audioEl");
+const fileInput = $("fileInput");
+
+let duration = 0;
+let startTime = 0, endTime = 0;
+let zoomStart = 0, zoomWidth = 10; // 현재 보이는 창
+let currentFile = null;
+let previewWatcher = null;
+
+// ---------- 시간 포맷 ----------
+function fmt(sec) {
+  sec = Math.max(0, sec);
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = (sec % 60).toFixed(2).padStart(5, "0");
+  return `${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}:${s}`;
+}
+function parseTime(str) {
+  const parts = str.trim().split(":").map(Number);
+  if (parts.some(isNaN)) return null;
+  if (parts.length === 3) return parts[0]*3600 + parts[1]*60 + parts[2];
+  if (parts.length === 2) return parts[0]*60 + parts[1];
+  if (parts.length === 1) return parts[0];
+  return null;
+}
+const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
+
+// ---------- 파일 로드 ----------
+fileInput.addEventListener("change", () => {
+  const f = fileInput.files[0];
+  if (!f) return;
+  currentFile = f;
+  audioEl.src = URL.createObjectURL(f);
+  audioEl.onloadedmetadata = () => {
+    duration = audioEl.duration;
+    startTime = 0;
+    endTime = duration;
+    zoomStart = 0;
+    zoomWidth = duration; // 처음엔 전체 보기
+    $("fileInfo").textContent = `${f.name} · ${(f.size/1024/1024).toFixed(1)}MB · 길이 ${fmt(duration)}`;
+    $("controls").style.display = "block";
+    $("exportPanel").style.display = "block";
+    $("seekBar").max = duration;
+    $("panBar").max = Math.max(0, duration - zoomWidth);
+    $("zoomSel").value = "full";
+    refreshAll();
+  };
+});
+
+// ---------- 재생 ----------
+$("playBtn").addEventListener("click", () => {
+  if (audioEl.paused) { audioEl.play(); $("playBtn").textContent = "⏸ 일시정지"; }
+  else { audioEl.pause(); $("playBtn").textContent = "▶ 재생"; }
+});
+audioEl.addEventListener("timeupdate", () => {
+  $("curTime").textContent = fmt(audioEl.currentTime);
+  $("seekBar").value = audioEl.currentTime;
+});
+audioEl.addEventListener("pause", () => { $("playBtn").textContent = "▶ 재생"; });
+$("seekBar").addEventListener("input", (e) => { audioEl.currentTime = +e.target.value; });
+
+$("previewBtn").addEventListener("click", () => {
+  clearInterval(previewWatcher);
+  audioEl.currentTime = startTime;
+  audioEl.play();
+  $("playBtn").textContent = "⏸ 일시정지";
+  previewWatcher = setInterval(() => {
+    if (audioEl.currentTime >= endTime || audioEl.paused) {
+      audioEl.pause();
+      clearInterval(previewWatcher);
+    }
+  }, 30);
+});
+
+// ---------- 줌(시간 척도) ----------
+$("zoomSel").addEventListener("change", () => {
+  const v = $("zoomSel").value;
+  zoomWidth = v === "full" ? duration : Math.min(+v, duration);
+  zoomStart = clamp(zoomStart, 0, Math.max(0, duration - zoomWidth));
+  refreshAll();
+});
+$("panBar").addEventListener("input", (e) => {
+  zoomStart = +e.target.value;
+  refreshAll();
+});
+
+// ---------- 시작/끝 슬라이더 ----------
+$("startBar").addEventListener("input", (e) => { setStart(+e.target.value); });
+$("endBar").addEventListener("input", (e) => { setEnd(+e.target.value); });
+$("startText").addEventListener("change", (e) => {
+  const t = parseTime(e.target.value);
+  if (t !== null) setStart(t);
+});
+$("endText").addEventListener("change", (e) => {
+  const t = parseTime(e.target.value);
+  if (t !== null) setEnd(t);
+});
+$("startNow").addEventListener("click", () => setStart(audioEl.currentTime));
+$("endNow").addEventListener("click", () => setEnd(audioEl.currentTime));
+$("startSeek").addEventListener("click", () => { audioEl.currentTime = startTime; });
+$("endSeek").addEventListener("click", () => { audioEl.currentTime = endTime; });
+
+document.querySelectorAll(".step-btns button").forEach(btn => {
+  btn.addEventListener("click", () => {
+    const d = +btn.dataset.delta;
+    if (btn.dataset.target === "start") setStart(startTime + d);
+    else setEnd(endTime + d);
+  });
+});
+
+function setStart(t) {
+  startTime = clamp(t, 0, endTime);
+  refreshMarkers();
+}
+function setEnd(t) {
+  endTime = clamp(t, startTime, duration);
+  refreshMarkers();
+}
+
+function refreshAll() {
+  $("panBar").max = Math.max(0, duration - zoomWidth);
+  $("panBar").value = zoomStart;
+  $("windowInfo").textContent = `${fmt(zoomStart)} ~ ${fmt(Math.min(duration, zoomStart+zoomWidth))}`;
+  refreshMarkers();
+}
+function refreshMarkers() {
+  const winEnd = Math.min(duration, zoomStart + zoomWidth);
+  [$("startBar"), $("endBar")].forEach(bar => {
+    bar.min = zoomStart; bar.max = winEnd;
+  });
+  $("startBar").value = clamp(startTime, zoomStart, winEnd);
+  $("endBar").value = clamp(endTime, zoomStart, winEnd);
+  $("startText").value = fmt(startTime);
+  $("endText").value = fmt(endTime);
+  $("durationInfo").textContent = `선택 구간 길이: ${fmt(endTime - startTime)}`;
+}
+
+// ---------- 내보내기 (ffmpeg.wasm) ----------
+let ffmpeg = null;
+const log = (msg) => { $("log").textContent += msg + "\n"; $("log").scrollTop = $("log").scrollHeight; };
+
+async function ensureFFmpeg() {
+  if (ffmpeg) return ffmpeg;
+  log("ffmpeg 엔진 불러오는 중... (처음 한 번만, 몇십 초 걸릴 수 있어요)");
+  ffmpeg = new FFmpeg();
+  ffmpeg.on("log", ({ message }) => log(message));
+  const baseURL = "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd";
+  await ffmpeg.load({
+    coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, "text/javascript"),
+    wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, "application/wasm"),
+  });
+  log("엔진 준비 완료.");
+  return ffmpeg;
+}
+
+$("exportBtn").addEventListener("click", async () => {
+  if (!currentFile) return;
+  const mode = document.querySelector('input[name="mode"]:checked').value;
+  const btn = $("exportBtn");
+  btn.disabled = true;
+  $("downloadArea").innerHTML = "";
+  $("log").textContent = "";
+  try {
+    const ff = await ensureFFmpeg();
+    const ext = currentFile.name.includes(".") ? currentFile.name.split(".").pop() : "mp3";
+    const inName = "input." + ext;
+    const outName = mode === "copy" ? "output." + ext : "output.mp3";
+
+    log("파일 쓰는 중...");
+    await ff.writeFile(inName, await fetchFile(currentFile));
+
+    const dur = (endTime - startTime).toFixed(3);
+    const args = mode === "copy"
+      ? ["-ss", String(startTime), "-i", inName, "-t", dur, "-vn", "-c", "copy", outName]
+      : ["-ss", String(startTime), "-i", inName, "-t", dur, "-vn", "-c:a", "libmp3lame", "-q:a", "2", outName];
+
+    log("자르는 중: " + args.join(" "));
+    await ff.exec(args);
+
+    const data = await ff.readFile(outName);
+    const blob = new Blob([data.buffer], { type: mode === "copy" ? currentFile.type || "audio/mpeg" : "audio/mpeg" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `cut_${Math.round(startTime)}s-${Math.round(endTime)}s.${mode === "copy" ? ext : "mp3"}`;
+    a.className = "download";
+    a.textContent = `⬇ 다운로드 (${(blob.size/1024/1024).toFixed(1)}MB)`;
+    $("downloadArea").appendChild(a);
+    log("완료!");
+  } catch (err) {
+    log("오류: " + err.message);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+// ---------- PWA: 서비스 워커 등록 ----------
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("./sw.js").catch((e) => console.warn("SW 등록 실패:", e));
+  });
+}
+</script>
+</body>
+</html>
